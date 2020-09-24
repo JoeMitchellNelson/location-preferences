@@ -1,6 +1,6 @@
 require(pacman)
 
-p_load(tidyverse,tidycensus)
+p_load(tidyverse,tidycensus,sf)
 
 # make a dataframe with county level variables
 
@@ -15,7 +15,7 @@ census_data <- get_acs(geography = "county",
                          hh_size= "B08202_001",
                          housing_cost = "B25105_001",
                          renters = "B07013_003"), 
-                       geometry=F,                
+                       geometry=T,                
                        shift_geo=F,
                        output="wide")
 
@@ -70,3 +70,90 @@ urban$FIPS <- as.character(urban$FIPS)
 dat <- left_join(dat,urban,by=c("GEOID"="FIPS"))
 summary(lm(lifeexp ~ housing_cost + vcrimerate + airpollution + rep_prop + vax + median_hh_inc + educ + factor(RUCC_2013),data=dat))
 summary(lm(lifeexp ~ factor(RUCC_2013),data=dat))
+
+######## max temperature ############
+
+# noaa doesn't use regular state fips, but does use county fips, go figure
+# set up a rosetta stone between noaa codes/fips codes
+statecodes <- read.table("~/location-preferences/noaa_state_codes.txt",sep="\t",colClasses = "character")
+statecodes$V1 <- trimws(statecodes$V1)
+statecodes$V2 <- trimws(statecodes$V2)
+statecodes2 <- fips_codes %>% dplyr::select(state_code,state_name)
+statecodes <- left_join(statecodes,statecodes2,by=c("V2"="state_name"))
+statecodes <- unique(statecodes)
+names(statecodes) <- c("noaastate","statename","statefips")
+
+#noaa <- read.table("ftp://ftp.ncdc.noaa.gov/pub/data/cirs/climdiv/climdiv-tmaxcy-v1.0.0-20200904")
+temp <- noaa
+temp$V1 <- ifelse(str_length(temp$V1)==10,paste0("0",temp$V1),temp$V1)
+
+temp$year <- substr(temp$V1,8,11)
+temp <- temp %>% dplyr::filter(year>=2010)
+
+temp$noaastate <- substr(as.character(temp$V1),1,2)
+temp <- left_join(temp,statecodes)
+temp$countyfips <- substr(temp$V1,3,5)
+temp$fips <- paste0(temp$statefips,temp$countyfips)
+
+temp2 <- temp %>% group_by(fips) %>% summarise(jan=mean(V2),
+                                               feb=mean(V3),
+                                               mar=mean(V4),
+                                               apr=mean(V5),
+                                               may=mean(V6),
+                                               jun=mean(V7),
+                                               jul=mean(V8),
+                                               aug=mean(V9),
+                                               sep=mean(V10),
+                                               oct=mean(V11),
+                                               nov=mean(V12),
+                                               dec=mean(V13))
+
+temp2$maxtemp <- NA
+
+for (i in 1:nrow(temp2)) {
+  temp2$maxtemp[i] <- max(temp2[i,2:13])
+}
+
+temp2 <- temp2 %>% dplyr::select(fips,maxtemp)
+
+dat <- left_join(dat,temp2,by=c("GEOID"="fips"))
+
+
+dat <- dat %>% mutate(u = -housing_cost - maxtemp - (15*rep_prop)^2 + 1000*vax - vcrimerate - 10*airpollution + 20*educ + 100*I(RUCC_2013==6) + 50*I(RUCC_2013==4))
+dat[which(dat$u==max(dat$u,na.rm=T)),]
+summary(dat$u)
+
+ggplot(dat) +
+  geom_sf(aes(fill=u),color=NA) +
+  scale_fill_viridis_c()
+
+
+######### city MSAs for distance calc ##################
+
+
+city <- get_estimates(
+  geography = "metropolitan statistical area/micropolitan statistical area",
+  product = "population",
+  year = "2016",
+  geometry = T
+)
+
+city <- city %>% dplyr::filter(variable=="POP")
+city <- city %>% dplyr::filter(!str_detect(NAME,"Micro Area"))
+city <- city %>% dplyr::filter(value>1000000)
+
+dat$centroid <- st_centroid(dat$geometry)
+city$centroid <- st_centroid(city$geometry)
+
+for (i in 1:nrow(dat)) {
+  dat$dist_to_city[i] <- min(st_distance(dat$centroid[i],city$centroid))
+}
+
+
+ggplot(city) +
+  geom_sf(data=dat[which(!str_detect(dat$NAME,"Alaska|Hawaii|Puerto Rico")),]) +
+  geom_sf(aes(fill=value))
+
+ggplot(dat[which(!str_detect(dat$NAME,"Alaska|Hawaii|Puerto")),]) +
+  geom_sf(aes(fill=dist_to_city),color=NA) +
+  scale_fill_viridis_c()
