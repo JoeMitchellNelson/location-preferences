@@ -21,9 +21,9 @@ library(ggthemes)
 
 # Define UI for application that draws a histogram
 ui <- fluidPage(
-  
+  setBackgroundColor("#e2d4d0"),
   # Application title
-  titlePanel("Where does Kati want to live?"),
+  titlePanel("Where do you want to live?"),
   
   # Sidebar with a slider input for number of bins 
   fluidRow(
@@ -231,11 +231,13 @@ server <- function(input, output,session) {
         geom_sf(aes(fill=u),color=NA) +
         scale_fill_viridis_c() +
         labs(fill="Score") +
-        theme_minimal()
+        theme_minimal() +
+        theme(panel.background = element_rect(fill="#e2d4d0",color="#e2d4d0"),
+              plot.background = element_rect(fill="#e2d4d0",color="#e2d4d0"))
       b }
     
   },width = 500,
-  height = 250)
+  height = 242)
   
   output$message <- renderUI({
     
